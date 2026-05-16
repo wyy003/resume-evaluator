@@ -260,6 +260,13 @@
                         根据简历内容和职位要求的综合分析，该简历的匹配度为 <strong style="color: #667eea;">{{ llm_analysis.match_score }}%</strong>。
                         以下是详细的评估反馈。
                     </p>
+                    {% if tokens_used > 0 %}
+                    <div style="margin-top: 15px; padding: 12px; background: #f0f4ff; border-radius: 8px; font-size: 14px; color: #555;">
+                        <strong>💰 API 使用情况：</strong>
+                        <span style="margin-left: 10px;">Token: {{ tokens_used }}</span>
+                        <span style="margin-left: 15px;">成本: ${{ "%.4f"|format(api_cost) }}</span>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 

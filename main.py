@@ -33,7 +33,9 @@ def init_db():
                   upload_time TEXT,
                   parsed_data TEXT,
                   jd_text TEXT,
-                  llm_analysis TEXT)''')
+                  llm_analysis TEXT,
+                  tokens_used INTEGER,
+                  api_cost REAL)''')
     conn.commit()
     conn.close()
 
@@ -46,8 +48,8 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def analyze_with_llm(resume_json, jd_text):
     """使用 OpenAI API 分析简历与 JD 的匹配度"""
 
-    # 构建 Prompt
-    prompt = f"""你是一位专业的 HR，请分析以下简历与职位描述的匹配度。
+    # 构建优化后的 Prompt
+    prompt = f"""你是一位资深 HR 和招聘专家，请深度分析以下简历与职位描述的匹配度。
 
 【职位描述】
 {jd_text}
@@ -61,20 +63,45 @@ def analyze_with_llm(resume_json, jd_text):
 
 项目经验：{resume_json.get('sections', {}).get('projects', '无')}
 
-请按以下格式返回 JSON：
+【评分标准】（总分 100 分）
+1. 教育背景匹配度（20分）：学历层次、专业相关性、院校背景
+2. 工作经验匹配度（35分）：年限要求、行业经验、岗位相关性、职责匹配
+3. 技能匹配度（25分）：必备技能覆盖率、技能熟练度、技术栈匹配
+4. 项目经验匹配度（20分）：项目复杂度、业务场景相似度、成果量化
+
+【分析要求】
+1. match_score：基于上述标准给出 0-100 的综合评分
+2. strengths：列出 3-5 个核心优势，每条需包含：
+   - 具体的匹配点（引用简历原文）
+   - 与 JD 的对应关系
+   - 为什么这是优势
+3. weaknesses：列出 2-4 个明显不足，每条需包含：
+   - 具体缺失的要求（引用 JD 原文）
+   - 当前简历的差距
+   - 对求职的影响程度
+4. suggestions：列出 3-5 个可操作的改进建议，每条需包含：
+   - 具体的改进方向
+   - 如何补充或优化
+   - 预期的提升效果
+
+【输出格式】
+只返回以下 JSON 格式，不要任何其他文字：
 {{
   "match_score": 75,
-  "strengths": ["优势1", "优势2", "优势3"],
-  "weaknesses": ["不足1", "不足2"],
-  "suggestions": ["建议1", "建议2", "建议3"]
-}}
-
-要求：
-1. match_score 是 0-100 的整数，表示匹配度
-2. strengths 列出 2-4 个优势（具体、有依据）
-3. weaknesses 列出 1-3 个不足（客观、建设性）
-4. suggestions 列出 2-4 个改进建议（可操作）
-5. 只返回 JSON，不要其他文字"""
+  "strengths": [
+    "具有3年Python开发经验，与JD要求的'2年以上Python经验'高度匹配，且简历中提到使用FastAPI框架，正是岗位技术栈",
+    "项目经验中的'电商推荐系统'与JD中的'推荐算法优化'业务场景一致，展示了相关领域的实战能力"
+  ],
+  "weaknesses": [
+    "JD要求'熟悉Docker/K8s容器化部署'，但简历技能部分未提及相关经验，可能在DevOps能力上存在短板",
+    "工作经历缺少量化成果（如性能提升百分比、用户增长数据），难以体现实际业务价值"
+  ],
+  "suggestions": [
+    "在技能部分补充Docker和Kubernetes经验，如果有相关实践可详细描述部署流程和遇到的问题",
+    "为每个项目添加量化指标，如'优化推荐算法使点击率提升15%'，增强说服力",
+    "工作经历按STAR法则重写（情境-任务-行动-结果），突出解决问题的能力和业务影响"
+  ]
+}}"""
 
     try:
         # 调用 OpenAI API
@@ -102,6 +129,13 @@ def analyze_with_llm(resume_json, jd_text):
         # 验证返回格式
         if not all(key in result for key in ["match_score", "strengths", "weaknesses", "suggestions"]):
             raise ValueError("返回格式不完整")
+
+        # 添加 Token 使用信息
+        result['tokens_used'] = response.usage.total_tokens
+        result['prompt_tokens'] = response.usage.prompt_tokens
+        result['completion_tokens'] = response.usage.completion_tokens
+        # GPT-3.5-turbo 价格：$0.0015/1K prompt tokens, $0.002/1K completion tokens
+        result['api_cost'] = (response.usage.prompt_tokens * 0.0015 + response.usage.completion_tokens * 0.002) / 1000
 
         return result
 
@@ -460,8 +494,13 @@ async def upload_file(file: UploadFile = File(...), jd_text: str = Form("")):
     conn = sqlite3.connect('resumes.db')
     c = conn.cursor()
     upload_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('INSERT INTO uploads (filename, upload_time, parsed_data, jd_text, llm_analysis) VALUES (?, ?, ?, ?, ?)',
-              (file.filename, upload_time, parsed_json, jd_text, llm_analysis_json))
+
+    # 提取 Token 和成本信息
+    tokens_used = llm_analysis.get('tokens_used', 0) if llm_analysis else 0
+    api_cost = llm_analysis.get('api_cost', 0.0) if llm_analysis else 0.0
+
+    c.execute('INSERT INTO uploads (filename, upload_time, parsed_data, jd_text, llm_analysis, tokens_used, api_cost) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              (file.filename, upload_time, parsed_json, jd_text, llm_analysis_json, tokens_used, api_cost))
     upload_id = c.lastrowid
     conn.commit()
     conn.close()
@@ -470,6 +509,8 @@ async def upload_file(file: UploadFile = File(...), jd_text: str = Form("")):
     print(f"📄 解析结果: {len(parsed_data.get('text', ''))} 字符")
     if llm_analysis:
         print(f"🤖 LLM 分析: 匹配度 {llm_analysis['match_score']}%")
+        if tokens_used > 0:
+            print(f"💰 Token 使用: {tokens_used} tokens (${api_cost:.4f})")
 
     return {
         "message": "上传成功",
@@ -484,14 +525,14 @@ async def get_result(request: Request, upload_id: int):
     """查看解析结果详情页"""
     conn = sqlite3.connect('resumes.db')
     c = conn.cursor()
-    c.execute('SELECT filename, upload_time, parsed_data, jd_text, llm_analysis FROM uploads WHERE id = ?', (upload_id,))
+    c.execute('SELECT filename, upload_time, parsed_data, jd_text, llm_analysis, tokens_used, api_cost FROM uploads WHERE id = ?', (upload_id,))
     result = c.fetchone()
     conn.close()
 
     if not result:
         return HTMLResponse("未找到记录", status_code=404)
 
-    filename, upload_time, parsed_json, jd_text, llm_analysis_json = result
+    filename, upload_time, parsed_json, jd_text, llm_analysis_json, tokens_used, api_cost = result
     parsed_data = json.loads(parsed_json) if parsed_json else {}
     llm_analysis = json.loads(llm_analysis_json) if llm_analysis_json else None
 
@@ -501,5 +542,50 @@ async def get_result(request: Request, upload_id: int):
         "upload_time": upload_time,
         "parsed_data": parsed_data,
         "jd_text": jd_text,
-        "llm_analysis": llm_analysis
+        "llm_analysis": llm_analysis,
+        "tokens_used": tokens_used or 0,
+        "api_cost": api_cost or 0.0
     })
+
+@app.get("/stats", response_class=HTMLResponse)
+async def get_stats(request: Request):
+    """查看 API 成本统计"""
+    conn = sqlite3.connect('resumes.db')
+    c = conn.cursor()
+
+    # 获取所有记录
+    c.execute('SELECT id, filename, upload_time, tokens_used, api_cost FROM uploads ORDER BY upload_time DESC')
+    records = []
+    total_tokens = 0
+    total_cost = 0.0
+
+    for row in c.fetchall():
+        record_id, filename, upload_time, tokens_used, api_cost = row
+        tokens_used = tokens_used or 0
+        api_cost = api_cost or 0.0
+
+        records.append({
+            'id': record_id,
+            'filename': filename,
+            'upload_time': upload_time,
+            'tokens_used': tokens_used,
+            'api_cost': api_cost
+        })
+
+        total_tokens += tokens_used
+        total_cost += api_cost
+
+    conn.close()
+
+    total_count = len(records)
+    avg_cost = total_cost / total_count if total_count > 0 else 0.0
+
+    return templates.TemplateResponse("stats.html", {
+        "request": request,
+        "records": records,
+        "total_count": total_count,
+        "total_tokens": total_tokens,
+        "total_cost": total_cost,
+        "avg_cost": avg_cost
+    })
+
