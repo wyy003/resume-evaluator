@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简历评估工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        .upload-section {
+            border: 3px dashed #ddd;
+            padding: 40px;
+            text-align: center;
+            margin: 30px 0;
+            border-radius: 12px;
+            background: #fafafa;
+            transition: all 0.3s ease;
+        }
+        .upload-section:hover {
+            border-color: #667eea;
+            background: #f5f7ff;
+        }
+        .upload-section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        input[type="file"] {
+            margin: 15px 0;
+            padding: 10px;
+            font-size: 14px;
+        }
+        label {
+            display: block;
+            text-align: left;
+            margin: 20px auto 10px;
+            max-width: 600px;
+            font-weight: 600;
+            color: #555;
+        }
+        textarea {
+            width: 100%;
+            max-width: 600px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 40px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 20px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .message {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+            display: none;
+            font-weight: 500;
+        }
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        .loading {
+            display: none;
+            margin: 20px 0;
+        }
+        .loading.active {
+            display: block;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .history {
+            margin-top: 50px;
+        }
+        .history h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+        }
+        th, td {
+            padding: 16px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+        a:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 简历评估工具</h1>
+        <p class="subtitle">上传简历 PDF，获取 AI 智能分析和优化建议</p>
+
+        <div class="upload-section">
+            <h2>上传简历 PDF</h2>
+            <form id="uploadForm">
+                <input type="file" id="fileInput" accept=".pdf" required>
+                <br><br>
+                <label for="jdInput">职位描述（JD）：</label>
+                <textarea id="jdInput" name="jd_text" rows="6" placeholder="粘贴职位描述（可选）&#10;例如：&#10;- 3年以上 Python 开发经验&#10;- 熟悉 FastAPI/Django 框架&#10;- 有 AI 项目经验优先"></textarea>
+                <br>
+                <button type="submit" id="submitBtn">开始分析</button>
+            </form>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 15px; color: #667eea;">正在分析简历，请稍候...</p>
+            </div>
+            <div id="message" class="message"></div>
+        </div>
+
+        <div class="history">
+            <h2>📋 历史记录</h2>
+            {% if history %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>文件名</th>
+                        <th>上传时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in history %}
+                    <tr>
+                        <td>{{ item[1] }}</td>
+                        <td>{{ item[2] }}</td>
+                        <td><a href="/result/{{ item[0] }}">查看分析结果 →</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <p>暂无历史记录，上传第一份简历开始吧！</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const fileInput = document.getElementById('fileInput');
+            const jdInput = document.getElementById('jdInput');
+            const messageDiv = document.getElementById('message');
+            const loadingDiv = document.getElementById('loading');
+            const submitBtn = document.getElementById('submitBtn');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                messageDiv.textContent = '⚠️ 请选择文件';
+                messageDiv.className = 'message error';
+                return;
+            }
+
+            // 检查文件大小（限制 10MB）
+            if (file.size > 10 * 1024 * 1024) {
+                messageDiv.textContent = '⚠️ 文件大小不能超过 10MB';
+                messageDiv.className = 'message error';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('jd_text', jdInput.value);
+
+            // 显示加载状态
+            loadingDiv.classList.add('active');
+            submitBtn.disabled = true;
+            messageDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    messageDiv.textContent = `✅ ${result.message}: ${result.filename}`;
+                    messageDiv.className = 'message success';
+                    messageDiv.style.display = 'block';
+
+                    // 直接跳转到结果页
+                    setTimeout(() => {
+                        window.location.href = `/result/${result.upload_id}`;
+                    }, 800);
+                } else {
+                    messageDiv.textContent = `❌ 上传失败: ${result.message || '未知错误'}`;
+                    messageDiv.className = 'message error';
+                    messageDiv.style.display = 'block';
+                }
+
+            } catch (error) {
+                messageDiv.textContent = '❌ 上传失败，请检查网络连接';
+                messageDiv.className = 'message error';
+                messageDiv.style.display = 'block';
+            } finally {
+                loadingDiv.classList.remove('active');
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
