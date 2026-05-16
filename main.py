@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
@@ -163,10 +163,11 @@ def analyze_with_llm_mock(resume_json, jd_text):
 
     # 2. 关键词匹配（最多 30 分）
     keyword_score = 0
+    matched_skills = []
     if jd_text.strip():
         jd_keywords = extract_keywords(jd_text)
-        match_count = count_keyword_matches(resume_json, jd_keywords)
-        keyword_score = min(match_count * 3, 30)
+        keyword_score, matched_skills = count_keyword_matches(resume_json, jd_keywords)
+        keyword_score = min(keyword_score, 30)  # 上限30分
         base_score += keyword_score
 
     # 3. 内容质量（最多 20 分）
@@ -192,7 +193,7 @@ def analyze_with_llm_mock(resume_json, jd_text):
 
     # 5. 动态生成优势/不足/建议
     strengths, weaknesses, suggestions = generate_feedback(
-        sections, jd_text, keyword_score, quality_score
+        sections, jd_text, keyword_score, quality_score, matched_skills
     )
 
     return {
@@ -204,29 +205,104 @@ def analyze_with_llm_mock(resume_json, jd_text):
 
 # 辅助函数
 def extract_keywords(jd_text):
-    """从 JD 中提取关键词"""
-    keywords = []
-    common_tech = ["python", "java", "javascript", "react", "vue", "django",
-                   "fastapi", "flask", "sql", "mysql", "postgresql", "mongodb",
-                   "docker", "kubernetes", "aws", "git", "linux", "redis",
-                   "typescript", "node", "express", "spring", "golang", "rust",
-                   "tensorflow", "pytorch", "机器学习", "深度学习", "ai", "nlp"]
+    """从 JD 中提取关键词（优化版：支持同义词和权重）"""
+    # 技术栈同义词库
+    tech_synonyms = {
+        "python": ["python", "python3", "py", "django", "flask", "fastapi"],
+        "java": ["java", "spring", "springboot", "spring boot", "maven", "gradle"],
+        "javascript": ["javascript", "js", "typescript", "ts", "node", "nodejs", "node.js"],
+        "react": ["react", "reactjs", "react.js", "react native"],
+        "vue": ["vue", "vuejs", "vue.js", "vue3"],
+        "database": ["sql", "mysql", "postgresql", "postgres", "mongodb", "redis", "数据库"],
+        "docker": ["docker", "容器", "k8s", "kubernetes"],
+        "cloud": ["aws", "azure", "gcp", "阿里云", "腾讯云", "云计算"],
+        "ai": ["机器学习", "深度学习", "ai", "nlp", "cv", "tensorflow", "pytorch", "神经网络"],
+        "frontend": ["前端", "html", "css", "webpack", "vite"],
+        "backend": ["后端", "api", "restful", "微服务", "分布式"],
+        "git": ["git", "github", "gitlab", "版本控制"],
+        "linux": ["linux", "unix", "shell", "bash"],
+        "golang": ["go", "golang", "gin"],
+        "rust": ["rust", "cargo"]
+    }
+
+    # 核心技能关键词（权重更高）
+    core_indicators = ["必须", "精通", "熟练", "要求", "核心", "主要", "负责"]
 
     jd_lower = jd_text.lower()
-    for tech in common_tech:
-        if tech in jd_lower:
-            keywords.append(tech)
+    keywords = {}  # {category: {"weight": int, "found": bool}}
+
+    # 检测每个技术栈类别
+    for category, synonyms in tech_synonyms.items():
+        found = False
+        is_core = False
+
+        # 检查是否匹配任何同义词
+        for synonym in synonyms:
+            if synonym in jd_lower:
+                found = True
+
+                # 检查是否为核心技能（前后有核心指示词）
+                for indicator in core_indicators:
+                    if indicator in jd_text and synonym in jd_lower:
+                        # 简单判断：如果核心指示词和技能词在同一段落
+                        is_core = True
+                        break
+                break
+
+        if found:
+            keywords[category] = {
+                "weight": 3 if is_core else 2,  # 核心技能3分，普通技能2分
+                "synonyms": synonyms
+            }
 
     return keywords
 
 def count_keyword_matches(resume_json, keywords):
-    """计算简历中匹配的关键词数量"""
+    """计算简历中匹配的关键词数量（优化版：支持同义词和熟练度识别）"""
     resume_text = json.dumps(resume_json, ensure_ascii=False).lower()
-    match_count = 0
-    for keyword in keywords:
-        if keyword in resume_text:
-            match_count += 1
-    return match_count
+
+    total_score = 0
+    matched_skills = []
+
+    # 熟练度关键词
+    proficiency_levels = {
+        "精通": 1.5,
+        "熟练": 1.3,
+        "熟悉": 1.0,
+        "了解": 0.7
+    }
+
+    for category, info in keywords.items():
+        base_weight = info["weight"]
+        synonyms = info["synonyms"]
+
+        # 检查是否匹配任何同义词
+        matched = False
+        proficiency_multiplier = 1.0
+
+        for synonym in synonyms:
+            if synonym in resume_text:
+                matched = True
+
+                # 检查熟练度
+                for level, multiplier in proficiency_levels.items():
+                    # 在简历原文中查找（保留大小写以匹配中文）
+                    resume_original = json.dumps(resume_json, ensure_ascii=False)
+                    if level in resume_original and synonym in resume_text:
+                        # 简单判断：如果熟练度词和技能词距离较近
+                        proficiency_multiplier = max(proficiency_multiplier, multiplier)
+
+                break
+
+        if matched:
+            skill_score = base_weight * proficiency_multiplier
+            total_score += skill_score
+            matched_skills.append({
+                "category": category,
+                "score": skill_score
+            })
+
+    return int(total_score), matched_skills
 
 def has_numbers(text):
     """检查文本中是否有数字（量化指标）"""
@@ -242,8 +318,8 @@ def count_skills(skills_text):
         count = max(count, skills_text.count(sep) + 1)
     return count
 
-def generate_feedback(sections, jd_text, keyword_score, quality_score):
-    """动态生成优势/不足/建议"""
+def generate_feedback(sections, jd_text, keyword_score, quality_score, matched_skills=None):
+    """动态生成优势/不足/建议（优化版：基于匹配的技能）"""
     strengths = []
     weaknesses = []
     suggestions = []
@@ -266,13 +342,17 @@ def generate_feedback(sections, jd_text, keyword_score, quality_score):
         weaknesses.append("缺少工作经历")
         suggestions.append("建议补充相关工作经验")
 
-    # 关键词匹配
+    # 关键词匹配（优化版：显示具体匹配的技能）
     if jd_text.strip():
-        if keyword_score > 15:
-            strengths.append("技能与岗位要求匹配度较高")
-        elif keyword_score > 5:
-            weaknesses.append("部分技能与岗位要求匹配，但覆盖不全")
-            suggestions.append("建议补充更多与 JD 相关的技能关键词")
+        if matched_skills and len(matched_skills) > 0:
+            # 显示匹配的技能类别
+            skill_names = [skill["category"] for skill in matched_skills[:5]]  # 最多显示5个
+            strengths.append(f"技能匹配度良好，涵盖：{', '.join(skill_names)}")
+
+            if keyword_score > 20:
+                strengths.append("核心技能覆盖全面，与岗位要求高度匹配")
+            elif keyword_score > 10:
+                suggestions.append("建议在简历中更突出核心技能的熟练程度（如：精通、熟练）")
         else:
             weaknesses.append("简历中缺少岗位相关的关键技能")
             suggestions.append("建议仔细阅读 JD，在简历中突出相关技能和经验")
@@ -588,4 +668,159 @@ async def get_stats(request: Request):
         "total_cost": total_cost,
         "avg_cost": avg_cost
     })
+
+@app.get("/batch-results", response_class=HTMLResponse)
+async def get_batch_results(request: Request, ids: str):
+    """批量结果展示页面"""
+    conn = sqlite3.connect('resumes.db')
+    c = conn.cursor()
+
+    # 解析 ID 列表
+    upload_ids = [int(id.strip()) for id in ids.split(',') if id.strip()]
+
+    results = []
+    for upload_id in upload_ids:
+        c.execute('SELECT id, filename, upload_time, llm_analysis FROM uploads WHERE id = ?', (upload_id,))
+        row = c.fetchone()
+
+        if row:
+            record_id, filename, upload_time, llm_analysis_json = row
+
+            # 解析 LLM 分析结果
+            if llm_analysis_json:
+                llm_analysis = json.loads(llm_analysis_json)
+                score = llm_analysis.get('match_score', 0)
+                strengths = llm_analysis.get('strengths', [])
+                weaknesses = llm_analysis.get('weaknesses', [])
+                suggestions = llm_analysis.get('suggestions', [])
+            else:
+                score = 0
+                strengths = []
+                weaknesses = []
+                suggestions = []
+
+            results.append({
+                'id': record_id,
+                'filename': filename,
+                'upload_time': upload_time,
+                'score': score,
+                'strengths_count': len(strengths),
+                'weaknesses_count': len(weaknesses),
+                'suggestions_count': len(suggestions)
+            })
+
+    conn.close()
+
+    # 统计数据
+    high_count = sum(1 for r in results if r['score'] >= 80)
+    medium_count = sum(1 for r in results if 60 <= r['score'] < 80)
+    low_count = sum(1 for r in results if r['score'] < 60)
+    avg_score = int(sum(r['score'] for r in results) / len(results)) if results else 0
+
+    return templates.TemplateResponse("batch_results.html", {
+        "request": request,
+        "results": results,
+        "high_count": high_count,
+        "medium_count": medium_count,
+        "low_count": low_count,
+        "avg_score": avg_score
+    })
+
+@app.get("/export/{record_id}")
+async def export_report(record_id: int):
+    """导出分析报告为Word文档"""
+    conn = sqlite3.connect('resumes.db')
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT filename, upload_time, parsed_data, jd_text, llm_analysis, tokens_used, api_cost
+        FROM uploads WHERE id = ?
+    ''', (record_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return JSONResponse({"error": "记录不存在"}, status_code=404)
+
+    filename, upload_time, parsed_data_json, jd_text, llm_analysis_json, tokens_used, api_cost = row
+    parsed_data = json.loads(parsed_data_json)
+
+    # 创建Word文档
+    doc = Document()
+
+    # 标题
+    title = doc.add_heading('简历分析报告', 0)
+    title.alignment = 1  # 居中
+
+    # 基本信息
+    doc.add_heading('基本信息', level=1)
+    doc.add_paragraph(f'文件名：{filename}')
+    doc.add_paragraph(f'分析时间：{upload_time}')
+    doc.add_paragraph(f'文本长度：{len(parsed_data.get("text", ""))} 字符')
+
+    if tokens_used:
+        doc.add_paragraph(f'Token 使用：{tokens_used}')
+    if api_cost:
+        doc.add_paragraph(f'分析成本：${api_cost:.4f}')
+
+    # AI分析结果
+    if llm_analysis_json:
+        llm_analysis = json.loads(llm_analysis_json)
+
+        doc.add_heading('AI 分析结果', level=1)
+
+        # 匹配度分数
+        score = llm_analysis.get('score', 0)
+        doc.add_paragraph(f'匹配度分数：{score} 分', style='Intense Quote')
+
+        # 优势
+        strengths = llm_analysis.get('strengths', [])
+        if strengths:
+            doc.add_heading('优势', level=2)
+            for strength in strengths:
+                doc.add_paragraph(strength, style='List Bullet')
+
+        # 不足
+        weaknesses = llm_analysis.get('weaknesses', [])
+        if weaknesses:
+            doc.add_heading('不足', level=2)
+            for weakness in weaknesses:
+                doc.add_paragraph(weakness, style='List Bullet')
+
+        # 改进建议
+        suggestions = llm_analysis.get('suggestions', [])
+        if suggestions:
+            doc.add_heading('改进建议', level=2)
+            for suggestion in suggestions:
+                doc.add_paragraph(suggestion, style='List Bullet')
+
+    # 职位描述
+    if jd_text:
+        doc.add_heading('职位描述', level=1)
+        doc.add_paragraph(jd_text)
+
+    # 简历内容
+    doc.add_heading('简历内容', level=1)
+
+    sections = ['education', 'work', 'skills', 'projects']
+    section_names = {'education': '教育背景', 'work': '工作经历', 'skills': '技能', 'projects': '项目经验'}
+
+    for section in sections:
+        content = parsed_data.get(section, '')
+        if content:
+            doc.add_heading(section_names[section], level=2)
+            doc.add_paragraph(content)
+
+    # 保存文档
+    output_filename = f"report_{record_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    output_path = os.path.join('uploads', output_filename)
+    doc.save(output_path)
+
+    return FileResponse(
+        path=output_path,
+        filename=output_filename,
+        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+
 

@@ -195,6 +195,21 @@
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
         }
+        .export-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #10b981;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .export-btn:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(16, 185, 129, 0.3);
+        }
         .empty {
             color: #999;
             font-style: italic;
@@ -362,7 +377,10 @@
             </div>
         </div>
 
-        <a href="/" class="back-link">← 返回首页</a>
+        <div style="display: flex; gap: 15px; justify-content: center; margin-top: 30px;">
+            <a href="/" class="back-link">← 返回首页</a>
+            <a href="/export/{{ record_id }}" class="export-btn">📥 导出报告</a>
+        </div>
     </div>
 
     <script>

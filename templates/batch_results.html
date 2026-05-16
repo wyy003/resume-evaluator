@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量分析结果</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls input, .controls select {
+            padding: 10px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        .controls input:focus, .controls select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .controls button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s ease;
+        }
+        .controls button:hover {
+            transform: translateY(-2px);
+        }
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .result-card {
+            background: white;
+            border: 2px solid #eee;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .result-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+        .result-card.high-match {
+            border-color: #4caf50;
+            background: linear-gradient(135deg, #f1f8f4 0%, #ffffff 100%);
+        }
+        .result-card.medium-match {
+            border-color: #ff9800;
+            background: linear-gradient(135deg, #fff8f0 0%, #ffffff 100%);
+        }
+        .result-card.low-match {
+            border-color: #f44336;
+            background: linear-gradient(135deg, #fff0f0 0%, #ffffff 100%);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .filename {
+            font-weight: 600;
+            color: #333;
+            font-size: 16px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+        .score-badge {
+            font-size: 24px;
+            font-weight: bold;
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin-left: 10px;
+        }
+        .score-badge.high {
+            background: #4caf50;
+            color: white;
+        }
+        .score-badge.medium {
+            background: #ff9800;
+            color: white;
+        }
+        .score-badge.low {
+            background: #f44336;
+            color: white;
+        }
+        .card-info {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+        .card-summary {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+        .summary-item {
+            margin: 8px 0;
+            font-size: 14px;
+            color: #555;
+        }
+        .summary-item strong {
+            color: #333;
+        }
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+        .back-link:hover {
+            color: #764ba2;
+        }
+        .stats-bar {
+            display: flex;
+            gap: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .stat-label {
+            font-size: 13px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← 返回首页</a>
+
+        <h1>📊 批量分析结果</h1>
+        <p class="subtitle">共分析 {{ results|length }} 份简历</p>
+
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value">{{ results|length }}</div>
+                <div class="stat-label">总简历数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" style="color: #4caf50;">{{ high_count }}</div>
+                <div class="stat-label">高匹配 (≥80分)</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" style="color: #ff9800;">{{ medium_count }}</div>
+                <div class="stat-label">中匹配 (60-79分)</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" style="color: #f44336;">{{ low_count }}</div>
+                <div class="stat-label">低匹配 (<60分)</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ avg_score }}%</div>
+                <div class="stat-label">平均匹配度</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="🔍 搜索文件名..." style="flex: 1; min-width: 200px;">
+            <select id="sortSelect">
+                <option value="score-desc">按分数降序</option>
+                <option value="score-asc">按分数升序</option>
+                <option value="name-asc">按文件名 A-Z</option>
+                <option value="time-desc">按时间最新</option>
+            </select>
+            <select id="filterSelect">
+                <option value="all">全部简历</option>
+                <option value="high">高匹配 (≥80分)</option>
+                <option value="medium">中匹配 (60-79分)</option>
+                <option value="low">低匹配 (<60分)</option>
+            </select>
+        </div>
+
+        <div class="results-grid" id="resultsGrid">
+            {% if results %}
+                {% for result in results %}
+                <div class="result-card {% if result.score >= 80 %}high-match{% elif result.score >= 60 %}medium-match{% else %}low-match{% endif %}"
+                     data-score="{{ result.score }}"
+                     data-filename="{{ result.filename }}"
+                     data-time="{{ result.upload_time }}"
+                     onclick="window.location.href='/result/{{ result.id }}'">
+                    <div class="card-header">
+                        <div class="filename" title="{{ result.filename }}">{{ result.filename }}</div>
+                        <div class="score-badge {% if result.score >= 80 %}high{% elif result.score >= 60 %}medium{% else %}low{% endif %}">
+                            {{ result.score }}%
+                        </div>
+                    </div>
+                    <div class="card-info">
+                        📅 {{ result.upload_time }}
+                    </div>
+                    <div class="card-summary">
+                        <div class="summary-item">
+                            <strong>✅ 优势：</strong>{{ result.strengths_count }} 项
+                        </div>
+                        <div class="summary-item">
+                            <strong>⚠️ 不足：</strong>{{ result.weaknesses_count }} 项
+                        </div>
+                        <div class="summary-item">
+                            <strong>💡 建议：</strong>{{ result.suggestions_count }} 项
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <p>没有找到分析结果</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const sortSelect = document.getElementById('sortSelect');
+        const filterSelect = document.getElementById('filterSelect');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const cards = Array.from(document.querySelectorAll('.result-card'));
+
+        function updateDisplay() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const sortBy = sortSelect.value;
+            const filterBy = filterSelect.value;
+
+            // 过滤
+            let filteredCards = cards.filter(card => {
+                const filename = card.dataset.filename.toLowerCase();
+                const score = parseInt(card.dataset.score);
+
+                const matchesSearch = filename.includes(searchTerm);
+                let matchesFilter = true;
+
+                if (filterBy === 'high') matchesFilter = score >= 80;
+                else if (filterBy === 'medium') matchesFilter = score >= 60 && score < 80;
+                else if (filterBy === 'low') matchesFilter = score < 60;
+
+                return matchesSearch && matchesFilter;
+            });
+
+            // 排序
+            filteredCards.sort((a, b) => {
+                if (sortBy === 'score-desc') {
+                    return parseInt(b.dataset.score) - parseInt(a.dataset.score);
+                } else if (sortBy === 'score-asc') {
+                    return parseInt(a.dataset.score) - parseInt(b.dataset.score);
+                } else if (sortBy === 'name-asc') {
+                    return a.dataset.filename.localeCompare(b.dataset.filename);
+                } else if (sortBy === 'time-desc') {
+                    return b.dataset.time.localeCompare(a.dataset.time);
+                }
+            });
+
+            // 更新显示
+            resultsGrid.innerHTML = '';
+            if (filteredCards.length > 0) {
+                filteredCards.forEach(card => resultsGrid.appendChild(card));
+            } else {
+                resultsGrid.innerHTML = '<div class="empty-state"><p>没有找到匹配的结果</p></div>';
+            }
+        }
+
+        searchInput.addEventListener('input', updateDisplay);
+        sortSelect.addEventListener('change', updateDisplay);
+        filterSelect.addEventListener('change', updateDisplay);
+    </script>
+</body>
+</html>

@@ -195,7 +195,8 @@
         <div class="upload-section">
             <h2>上传简历（PDF/DOCX）</h2>
             <form id="uploadForm">
-                <input type="file" id="fileInput" accept=".pdf,.docx,.doc" required>
+                <input type="file" id="fileInput" accept=".pdf,.docx,.doc" multiple required>
+                <p style="color: #888; font-size: 13px; margin-top: 10px;">💡 支持多文件上传，按住 Ctrl/Cmd 选择多个文件</p>
                 <br><br>
                 <label for="jdInput">职位描述（JD）：</label>
                 <textarea id="jdInput" name="jd_text" rows="6" placeholder="粘贴职位描述（可选）&#10;例如：&#10;- 3年以上 Python 开发经验&#10;- 熟悉 FastAPI/Django 框架&#10;- 有 AI 项目经验优先"></textarea>
@@ -204,7 +205,8 @@
             </form>
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p style="margin-top: 15px; color: #667eea;">正在分析简历，请稍候...</p>
+                <p style="margin-top: 15px; color: #667eea;" id="loadingText">正在分析简历，请稍候...</p>
+                <div id="progressInfo" style="margin-top: 10px; color: #666; font-size: 14px;"></div>
             </div>
             <div id="message" class="message"></div>
         </div>
@@ -246,61 +248,122 @@
             const jdInput = document.getElementById('jdInput');
             const messageDiv = document.getElementById('message');
             const loadingDiv = document.getElementById('loading');
+            const loadingText = document.getElementById('loadingText');
+            const progressInfo = document.getElementById('progressInfo');
             const submitBtn = document.getElementById('submitBtn');
-            const file = fileInput.files[0];
+            const files = fileInput.files;
 
-            if (!file) {
+            if (!files || files.length === 0) {
                 messageDiv.textContent = '⚠️ 请选择文件';
                 messageDiv.className = 'message error';
                 return;
             }
 
-            // 检查文件大小（限制 10MB）
-            if (file.size > 10 * 1024 * 1024) {
-                messageDiv.textContent = '⚠️ 文件大小不能超过 10MB';
-                messageDiv.className = 'message error';
-                return;
+            // 检查文件大小
+            for (let file of files) {
+                if (file.size > 10 * 1024 * 1024) {
+                    messageDiv.textContent = `⚠️ 文件 ${file.name} 大小不能超过 10MB`;
+                    messageDiv.className = 'message error';
+                    return;
+                }
             }
-
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('jd_text', jdInput.value);
 
             // 显示加载状态
             loadingDiv.classList.add('active');
             submitBtn.disabled = true;
             messageDiv.style.display = 'none';
 
-            try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
+            // 单文件上传
+            if (files.length === 1) {
+                const formData = new FormData();
+                formData.append('file', files[0]);
+                formData.append('jd_text', jdInput.value);
 
-                const result = await response.json();
+                try {
+                    const response = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
 
-                if (response.ok) {
-                    messageDiv.textContent = `✅ ${result.message}: ${result.filename}`;
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        messageDiv.textContent = `✅ ${result.message}: ${result.filename}`;
+                        messageDiv.className = 'message success';
+                        messageDiv.style.display = 'block';
+
+                        setTimeout(() => {
+                            window.location.href = `/result/${result.upload_id}`;
+                        }, 800);
+                    } else {
+                        messageDiv.textContent = `❌ 上传失败: ${result.message || '未知错误'}`;
+                        messageDiv.className = 'message error';
+                        messageDiv.style.display = 'block';
+                    }
+
+                } catch (error) {
+                    messageDiv.textContent = '❌ 上传失败，请检查网络连接';
+                    messageDiv.className = 'message error';
+                    messageDiv.style.display = 'block';
+                } finally {
+                    loadingDiv.classList.remove('active');
+                    submitBtn.disabled = false;
+                }
+            }
+            // 批量上传
+            else {
+                loadingText.textContent = `正在批量分析 ${files.length} 份简历...`;
+                const uploadIds = [];
+                let successCount = 0;
+                let failCount = 0;
+
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    progressInfo.textContent = `进度: ${i + 1}/${files.length} - ${file.name}`;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('jd_text', jdInput.value);
+
+                    try {
+                        const response = await fetch('/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        const result = await response.json();
+
+                        if (response.ok) {
+                            uploadIds.push(result.upload_id);
+                            successCount++;
+                        } else {
+                            failCount++;
+                            console.error(`上传失败: ${file.name}`, result);
+                        }
+
+                    } catch (error) {
+                        failCount++;
+                        console.error(`上传失败: ${file.name}`, error);
+                    }
+                }
+
+                loadingDiv.classList.remove('active');
+                submitBtn.disabled = false;
+
+                if (successCount > 0) {
+                    messageDiv.textContent = `✅ 批量上传完成！成功: ${successCount}, 失败: ${failCount}`;
                     messageDiv.className = 'message success';
                     messageDiv.style.display = 'block';
 
-                    // 直接跳转到结果页
+                    // 跳转到批量结果页面
                     setTimeout(() => {
-                        window.location.href = `/result/${result.upload_id}`;
-                    }, 800);
+                        window.location.href = `/batch-results?ids=${uploadIds.join(',')}`;
+                    }, 1500);
                 } else {
-                    messageDiv.textContent = `❌ 上传失败: ${result.message || '未知错误'}`;
+                    messageDiv.textContent = `❌ 批量上传失败，所有文件都未成功`;
                     messageDiv.className = 'message error';
                     messageDiv.style.display = 'block';
                 }
-
-            } catch (error) {
-                messageDiv.textContent = '❌ 上传失败，请检查网络连接';
-                messageDiv.className = 'message error';
-                messageDiv.style.display = 'block';
-            } finally {
-                loadingDiv.classList.remove('active');
-                submitBtn.disabled = false;
             }
         });
     </script>
