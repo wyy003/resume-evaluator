@@ -7,8 +7,14 @@ from datetime import datetime
 import sqlite3
 import json
 from pypdf import PdfReader
+from docx import Document
 import re
 import random
+from openai import OpenAI
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -33,7 +39,78 @@ def init_db():
 
 init_db()
 
-# LLM 分析函数（模拟版本 + 随机波动 + 优化评分逻辑）
+# 初始化 OpenAI 客户端
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# LLM 分析函数（真实 OpenAI API）
+def analyze_with_llm(resume_json, jd_text):
+    """使用 OpenAI API 分析简历与 JD 的匹配度"""
+
+    # 构建 Prompt
+    prompt = f"""你是一位专业的 HR，请分析以下简历与职位描述的匹配度。
+
+【职位描述】
+{jd_text}
+
+【简历内容】
+教育背景：{resume_json.get('sections', {}).get('education', '无')}
+
+工作经历：{resume_json.get('sections', {}).get('work', '无')}
+
+技能特长：{resume_json.get('sections', {}).get('skills', '无')}
+
+项目经验：{resume_json.get('sections', {}).get('projects', '无')}
+
+请按以下格式返回 JSON：
+{{
+  "match_score": 75,
+  "strengths": ["优势1", "优势2", "优势3"],
+  "weaknesses": ["不足1", "不足2"],
+  "suggestions": ["建议1", "建议2", "建议3"]
+}}
+
+要求：
+1. match_score 是 0-100 的整数，表示匹配度
+2. strengths 列出 2-4 个优势（具体、有依据）
+3. weaknesses 列出 1-3 个不足（客观、建设性）
+4. suggestions 列出 2-4 个改进建议（可操作）
+5. 只返回 JSON，不要其他文字"""
+
+    try:
+        # 调用 OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "你是一位专业的 HR，擅长分析简历与职位的匹配度。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=800
+        )
+
+        # 解析返回结果
+        result_text = response.choices[0].message.content.strip()
+
+        # 尝试提取 JSON（可能包含 markdown 代码块）
+        if "```json" in result_text:
+            result_text = result_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in result_text:
+            result_text = result_text.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(result_text)
+
+        # 验证返回格式
+        if not all(key in result for key in ["match_score", "strengths", "weaknesses", "suggestions"]):
+            raise ValueError("返回格式不完整")
+
+        return result
+
+    except Exception as e:
+        print(f"LLM 分析失败: {e}")
+        # 降级到 Mock 函数
+        return analyze_with_llm_mock(resume_json, jd_text)
+
+# LLM 分析函数（Mock 版本，作为降级方案）
 def analyze_with_llm_mock(resume_json, jd_text):
     """模拟 LLM 分析，返回固定格式的结果（带随机波动 + 智能评分）"""
 
@@ -193,6 +270,46 @@ def generate_feedback(sections, jd_text, keyword_score, quality_score):
 
     return strengths, weaknesses, suggestions
 
+# DOCX 解析函数
+def parse_docx(file_path):
+    """提取 DOCX 文字并识别简历段落"""
+    try:
+        doc = Document(file_path)
+        full_text = ""
+
+        # 提取所有段落的文字
+        for paragraph in doc.paragraphs:
+            full_text += paragraph.text + "\n"
+
+        if not full_text.strip():
+            return {
+                "filename": os.path.basename(file_path),
+                "text": "",
+                "sections": {
+                    "education": "",
+                    "work": "",
+                    "skills": "",
+                    "projects": ""
+                },
+                "error": "无法提取文字，文档可能为空"
+            }
+
+        # 使用与 PDF 相同的段落识别逻辑
+        return parse_text_sections(full_text, os.path.basename(file_path))
+
+    except Exception as e:
+        return {
+            "filename": os.path.basename(file_path),
+            "text": "",
+            "sections": {
+                "education": "",
+                "work": "",
+                "skills": "",
+                "projects": ""
+            },
+            "error": str(e)
+        }
+
 # PDF 解析函数
 def parse_pdf(file_path):
     """提取 PDF 文字并识别简历段落"""
@@ -217,65 +334,7 @@ def parse_pdf(file_path):
                 "error": "无法提取文字，可能是扫描版 PDF"
             }
 
-        lines = full_text.split('\n')
-
-        section_keywords = {
-            "education": ["教育", "学历", "education", "academic"],
-            "work": ["工作", "经历", "experience", "employment", "职位"],
-            "skills": ["技能", "skills", "能力", "专长"],
-            "projects": ["项目", "project", "作品"]
-        }
-
-        # 识别标题位置
-        title_line_indices = {
-            "education": None,
-            "work": None,
-            "skills": None,
-            "projects": None
-        }
-
-        for i, line in enumerate(lines):
-            line_lower = line.lower().strip()
-            if not line_lower:
-                continue
-
-            for section, keywords in section_keywords.items():
-                if any(keyword in line_lower for keyword in keywords):
-                    if title_line_indices[section] is None:
-                        title_line_indices[section] = i
-
-        # 提取段落内容
-        sections = {
-            "education": "",
-            "work": "",
-            "skills": "",
-            "projects": ""
-        }
-
-        # 获取所有标题的行号，按行号排序
-        all_title_indices = []
-        for section, idx in title_line_indices.items():
-            if idx is not None:
-                all_title_indices.append((idx, section))
-        all_title_indices.sort()
-
-        # 提取每个段落的内容
-        for i, (start_idx, section) in enumerate(all_title_indices):
-            # 确定结束位置：下一个标题的位置，或文件末尾
-            if i + 1 < len(all_title_indices):
-                end_idx = all_title_indices[i + 1][0]
-            else:
-                end_idx = len(lines)
-
-            # 提取内容（跳过标题行本身）
-            content_lines = lines[start_idx + 1:end_idx]
-            sections[section] = "\n".join(content_lines).strip()
-
-        return {
-            "filename": os.path.basename(file_path),
-            "text": full_text,
-            "sections": sections
-        }
+        return parse_text_sections(full_text, os.path.basename(file_path))
 
     except Exception as e:
         return {
@@ -289,6 +348,69 @@ def parse_pdf(file_path):
             },
             "error": str(e)
         }
+
+# 通用文本段落识别函数
+def parse_text_sections(full_text, filename):
+    """从文本中识别简历段落"""
+    lines = full_text.split('\n')
+
+    section_keywords = {
+        "education": ["教育", "学历", "education", "academic"],
+        "work": ["工作", "经历", "experience", "employment", "职位"],
+        "skills": ["技能", "skills", "能力", "专长"],
+        "projects": ["项目", "project", "作品"]
+    }
+
+    # 识别标题位置
+    title_line_indices = {
+        "education": None,
+        "work": None,
+        "skills": None,
+        "projects": None
+    }
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower().strip()
+        if not line_lower:
+            continue
+
+        for section, keywords in section_keywords.items():
+            if any(keyword in line_lower for keyword in keywords):
+                if title_line_indices[section] is None:
+                    title_line_indices[section] = i
+
+    # 提取段落内容
+    sections = {
+        "education": "",
+        "work": "",
+        "skills": "",
+        "projects": ""
+    }
+
+    # 获取所有标题的行号，按行号排序
+    all_title_indices = []
+    for section, idx in title_line_indices.items():
+        if idx is not None:
+            all_title_indices.append((idx, section))
+    all_title_indices.sort()
+
+    # 提取每个段落的内容
+    for i, (start_idx, section) in enumerate(all_title_indices):
+        # 确定结束位置：下一个标题的位置，或文件末尾
+        if i + 1 < len(all_title_indices):
+            end_idx = all_title_indices[i + 1][0]
+        else:
+            end_idx = len(lines)
+
+        # 提取内容（跳过标题行本身）
+        content_lines = lines[start_idx + 1:end_idx]
+        sections[section] = "\n".join(content_lines).strip()
+
+    return {
+        "filename": filename,
+        "text": full_text,
+        "sections": sections
+    }
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -312,14 +434,24 @@ async def upload_file(file: UploadFile = File(...), jd_text: str = Form("")):
         content = await file.read()
         f.write(content)
 
-    # 解析 PDF
-    parsed_data = parse_pdf(file_path)
+    # 根据文件类型选择解析函数
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext == '.pdf':
+        parsed_data = parse_pdf(file_path)
+    elif file_ext in ['.docx', '.doc']:
+        parsed_data = parse_docx(file_path)
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"不支持的文件格式: {file_ext}，仅支持 PDF 和 DOCX"}
+        )
+
     parsed_json = json.dumps(parsed_data, ensure_ascii=False)
 
-    # LLM 分析
+    # LLM 分析（使用真实 OpenAI API）
     llm_analysis = None
     if jd_text.strip():
-        llm_analysis = analyze_with_llm_mock(parsed_data, jd_text)
+        llm_analysis = analyze_with_llm(parsed_data, jd_text)
         llm_analysis_json = json.dumps(llm_analysis, ensure_ascii=False)
     else:
         llm_analysis_json = None
